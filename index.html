@@ -48,6 +48,12 @@
           LayoutDashboard, Receipt, Settings, Users, CreditCard, History, AlertCircle, MessageCircle, LogOut, Menu, X, Plus, Save, CheckCircle2, Printer, Search, Bell, Trash2, FileText, ShoppingCart, Download, Upload, Edit, CheckSquare, DollarSign, Globe, Cloud, Loader2
         } from 'lucide-react';
 
+        // =====================================================================
+        // 🔴 KONFIGURASI DATABASE: TARUH URL GOOGLE APPS SCRIPT ANDA DI SINI
+        // =====================================================================
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbxAEKXyxhD97g0nGvy3beuCXwatiEHcO5tkhwTcPHxcm9ud25-Ssuc-8HFPrk6SLrJZFQ/exec";
+        // =====================================================================
+
         // --- HELPER FUNCTIONS ---
         const formatPhone = (phone) => {
           if (!phone) return '';
@@ -116,12 +122,40 @@
           // Global UI States
           const [toast, setToast] = useState(null);
           const [printData, setPrintData] = useState(null);
+          const [isSyncing, setIsSyncing] = useState(false);
 
           // Sync to LocalStorage on change
           useEffect(() => { saveData('siBayar_students', students); }, [students]);
           useEffect(() => { saveData('siBayar_payments', paymentTypes); }, [paymentTypes]);
           useEffect(() => { saveData('siBayar_transactions', transactions); }, [transactions]);
           useEffect(() => { saveData('siBayar_settings', settings); }, [settings]);
+
+          // --- AUTO SYNC UP (BACKGROUND) ---
+          useEffect(() => {
+            if (!isLoggedIn || GAS_URL.includes("TARUH_URL")) return;
+
+            const timer = setTimeout(async () => {
+              setIsSyncing(true);
+              try {
+                const payload = {
+                  action: 'syncUp',
+                  data: {
+                    students,
+                    payments: paymentTypes,
+                    transactions: transactions.map(t => ({ ...t, items: JSON.stringify(t.items) })),
+                    settings
+                  }
+                };
+                await fetch(GAS_URL, { method: 'POST', body: JSON.stringify(payload) });
+              } catch (error) {
+                console.error("Auto-sync failed", error);
+              } finally {
+                setIsSyncing(false);
+              }
+            }, 3000); // Sinkronisasi otomatis 3 detik setelah tidak ada perubahan (Debounce)
+
+            return () => clearTimeout(timer);
+          }, [students, paymentTypes, transactions, settings, isLoggedIn]);
 
           // --- ACTIONS ---
           const showToast = (message, type = 'success') => {
@@ -134,13 +168,38 @@
             setTimeout(() => { window.print(); }, 200);
           };
 
-          const handleLogin = (e) => {
+          const handleLogin = async (e) => {
             e.preventDefault();
             const userIn = e.target.username.value;
             const pass = e.target.password.value;
             if (userIn === 'admin' && pass === 'admin123') {
               setIsLoggedIn(true);
-              showToast('Login berhasil! Mode Local-First Aktif.', 'success');
+
+              // AUTO FETCH (DOWNLOAD) KETIKA LOGIN
+              if (GAS_URL && !GAS_URL.includes("TARUH_URL")) {
+                showToast('Login berhasil! Mengambil data terbaru dari Cloud...', 'success');
+                setIsSyncing(true);
+                try {
+                  const res = await fetch(GAS_URL);
+                  const data = await res.json();
+                  
+                  if (data.students && data.students.length > 0) setStudents(data.students);
+                  if (data.payments && data.payments.length > 0) setPaymentTypes(data.payments);
+                  if (data.settings && data.settings.schoolName) setSettings(data.settings);
+                  if (data.transactions && data.transactions.length > 0) {
+                    setTransactions(data.transactions.map(t => ({
+                      ...t,
+                      items: typeof t.items === 'string' ? JSON.parse(t.items) : t.items
+                    })));
+                  }
+                  showToast('Data berhasil diperbarui dari Cloud!', 'success');
+                } catch (error) {
+                  showToast('Gagal terhubung ke Cloud. Menggunakan data lokal.', 'error');
+                }
+                setIsSyncing(false);
+              } else {
+                showToast('Login berhasil! Mode Local-First Aktif.', 'success');
+              }
             } else {
               showToast('Username atau Password salah!', 'error');
             }
@@ -168,13 +227,13 @@
             { id: 'students', label: 'Data Siswa', icon: Users },
             { id: 'arrears', label: 'Data Tunggakan', icon: AlertCircle },
             { id: 'broadcast', label: 'Blast WA Ortu', icon: MessageCircle },
-            { id: 'settings', label: 'Pengaturan & Cloud', icon: Settings },
+            { id: 'settings', label: 'Pengaturan', icon: Settings },
           ];
 
           if (!isLoggedIn) {
             return (
               <>
-                <LoginScreen onLogin={handleLogin} />
+                <LoginScreen onLogin={handleLogin} isSyncing={isSyncing} />
                 {toast && <ToastNotification toast={toast} onClose={() => setToast(null)} />}
               </>
             );
@@ -226,7 +285,8 @@
               case 'settings':
                 return (
                   <SettingsPanel 
-                    settings={settings} setSettings={setSettings} showToast={showToast} 
+                    settings={settings} setSettings={setSettings} showToast={showToast}
+                    isSyncing={isSyncing} setIsSyncing={setIsSyncing}
                     students={students} setStudents={setStudents}
                     payments={paymentTypes} setPayments={setPaymentTypes}
                     transactions={transactions} setTransactions={setTransactions}
@@ -585,9 +645,16 @@
                       </h2>
                     </div>
                     <div className="flex items-center space-x-4">
-                      <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold border border-blue-200 flex items-center">
-                        Mode Lokal
-                      </span>
+                      {isSyncing && (
+                        <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-xs font-bold flex items-center animate-pulse border border-blue-200">
+                          <Cloud className="w-3.5 h-3.5 mr-1.5" /> Menyinkronkan...
+                        </span>
+                      )}
+                      {!isSyncing && !GAS_URL.includes("TARUH_URL") && (
+                        <span className="bg-green-50 text-green-600 px-3 py-1 rounded-full text-xs font-bold border border-green-200 flex items-center">
+                          <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Tersinkron
+                        </span>
+                      )}
                       <div className="h-8 w-px bg-gray-200"></div>
                       <div className="text-right hidden md:block">
                         <p className="text-sm font-bold text-gray-800">{settings.schoolName}</p>
@@ -639,7 +706,7 @@
                   <FileText className="w-10 h-10 text-white" />
                 </div>
                 <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">SI-BAYAR PRO</h1>
-                <p className="text-gray-500 mt-2 font-medium">Sistem Informasi Pembayaran Sekolah (Local-First)</p>
+                <p className="text-gray-500 mt-2 font-medium">Sistem Informasi Pembayaran Sekolah</p>
               </div>
               <div className="bg-white p-8 rounded-2xl shadow-xl shadow-gray-200/50 w-full max-w-md border border-gray-100 relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
@@ -731,13 +798,13 @@
                     <Bell className="w-5 h-5 mr-2" /> Informasi Sistem
                   </h3>
                   <p className="text-blue-100 text-sm leading-relaxed mb-6">
-                    Selamat datang di Dasbor SI-BAYAR PRO. Aplikasi Anda sekarang tertanam langsung di browser dengan metode penyimpanan cepat (Local-First). Gunakan menu Pengaturan untuk mem-backup data ke Spreadsheet.
+                    Selamat datang di Dasbor SI-BAYAR PRO. Aplikasi Anda sekarang tertanam langsung di browser dengan metode penyimpanan cepat (Local-First). Data akan otomatis disinkronkan ke Cloud.
                   </p>
                   <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm border border-white/20">
                     <p className="text-xs text-blue-200 uppercase font-bold tracking-wider mb-1">Status Storage</p>
                     <div className="flex items-center">
                       <span className="w-2.5 h-2.5 bg-green-400 rounded-full mr-2 animate-pulse"></span>
-                      <span className="font-medium text-sm">Penyimpanan Lokal Aktif & Aman</span>
+                      <span className="font-medium text-sm">Penyimpanan Lokal & Cloud Aktif</span>
                     </div>
                   </div>
                 </div>
@@ -2161,10 +2228,7 @@
           );
         }
 
-        function SettingsPanel({ settings, setSettings, showToast, students, setStudents, payments, setPayments, transactions, setTransactions }) {
-          const [isLoading, setIsLoading] = useState(false);
-          const [scriptUrl, setScriptUrl] = useState(localStorage.getItem('GAS_URL') || '');
-
+        function SettingsPanel({ settings, setSettings, showToast }) {
           const handleSave = (e) => {
             e.preventDefault();
             setSettings({
@@ -2175,67 +2239,7 @@
               trxPrefix: e.target.trxPrefix.value,
               nextTrxNumber: parseInt(e.target.nextTrxNumber.value, 10) || 1,
             });
-            localStorage.setItem('GAS_URL', scriptUrl);
             showToast('Konfigurasi sistem berhasil diperbarui!', 'success');
-          };
-
-          const handleSyncUp = async () => {
-            if (!scriptUrl) {
-              showToast('URL Spreadsheet (Google Apps Script) belum diisi!', 'error');
-              return;
-            }
-            setIsLoading(true);
-            try {
-              const payload = {
-                action: 'syncUp',
-                data: {
-                  students,
-                  payments,
-                  transactions: transactions.map(t => ({ ...t, items: JSON.stringify(t.items) })),
-                  settings
-                }
-              };
-              
-              const res = await fetch(scriptUrl, {
-                method: 'POST',
-                body: JSON.stringify(payload)
-              });
-              
-              if(res.ok) {
-                showToast('Data berhasil di-backup ke Google Sheets!', 'success');
-              } else {
-                showToast('Gagal terhubung ke Google Sheets.', 'error');
-              }
-            } catch (error) {
-              showToast('Terjadi kesalahan jaringan.', 'error');
-            }
-            setIsLoading(false);
-          };
-
-          const handleSyncDown = async () => {
-            if (!scriptUrl) {
-              showToast('URL Spreadsheet belum diisi!', 'error');
-              return;
-            }
-            setIsLoading(true);
-            try {
-              const res = await fetch(scriptUrl);
-              const data = await res.json();
-              
-              if (data.students && data.students.length > 0) setStudents(data.students);
-              if (data.payments && data.payments.length > 0) setPayments(data.payments);
-              if (data.settings && data.settings.schoolName) setSettings(data.settings);
-              if (data.transactions && data.transactions.length > 0) {
-                setTransactions(data.transactions.map(t => ({
-                  ...t,
-                  items: typeof t.items === 'string' ? JSON.parse(t.items) : t.items
-                })));
-              }
-              showToast('Data berhasil dimuat dari Google Sheets!', 'success');
-            } catch (error) {
-              showToast('Gagal mengunduh data dari Spreadsheet.', 'error');
-            }
-            setIsLoading(false);
           };
 
           return (
@@ -2244,9 +2248,9 @@
               <div>
                 <div className="mb-6 border-b border-gray-100 pb-5">
                   <h3 className="text-xl font-extrabold text-gray-800 flex items-center">
-                    <Settings className="w-6 h-6 mr-2 text-blue-600" /> Pengaturan Identitas & Database
+                    <Settings className="w-6 h-6 mr-2 text-blue-600" /> Pengaturan Identitas Instansi
                   </h3>
-                  <p className="text-gray-500 text-sm mt-1 ml-8">Konfigurasi cetakan struk dan tautkan aplikasi ke Spreadsheet untuk backup/restore.</p>
+                  <p className="text-gray-500 text-sm mt-1 ml-8">Data ini akan digunakan sebagai KOP pada cetakan struk pembayaran dan pesan WhatsApp.</p>
                 </div>
 
                 <form onSubmit={handleSave} className="space-y-6">
@@ -2281,32 +2285,12 @@
                       <textarea name="address" defaultValue={settings.address} rows="3" required className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-50 hover:bg-white transition-colors outline-none font-medium leading-relaxed"></textarea>
                     </div>
 
-                    {/* INTEGRASI CLOUD DATABASE */}
-                    <div className="md:col-span-2 bg-blue-50 p-5 rounded-xl border border-blue-100 mt-2">
-                      <label className="block text-sm font-bold text-blue-900 mb-2 flex items-center">
-                        <Cloud className="w-4 h-4 mr-2" /> Tautan Database Cloud (Google Sheets)
-                      </label>
-                      <input 
-                        type="url" 
-                        value={scriptUrl}
-                        onChange={(e) => setScriptUrl(e.target.value)}
-                        placeholder="https://script.google.com/macros/s/AKfy.../exec" 
-                        className="w-full px-4 py-3 border border-blue-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-white outline-none font-medium text-sm text-blue-700" 
-                      />
-                      <p className="text-xs text-blue-600 mt-2 font-medium">Tempel URL Web App dari Google Apps Script di sini untuk mengaktifkan fitur penyimpanan awan.</p>
-                    </div>
                   </div>
 
                   <div className="pt-6 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center gap-4">
                     <div className="flex space-x-3 w-full sm:w-auto">
-                      <button type="button" onClick={handleSyncDown} disabled={isLoading} className="flex-1 sm:flex-none justify-center bg-emerald-100 text-emerald-700 font-bold px-4 py-2.5 rounded-xl hover:bg-emerald-200 transition-all flex items-center text-sm disabled:opacity-50">
-                        <Download className={`w-4 h-4 mr-2 ${isLoading ? 'animate-bounce' : ''}`} /> Muat Data
-                      </button>
-                      <button type="button" onClick={handleSyncUp} disabled={isLoading} className="flex-1 sm:flex-none justify-center bg-indigo-100 text-indigo-700 font-bold px-4 py-2.5 rounded-xl hover:bg-indigo-200 transition-all flex items-center text-sm disabled:opacity-50">
-                        <Upload className={`w-4 h-4 mr-2 ${isLoading ? 'animate-bounce' : ''}`} /> Backup Data
-                      </button>
                     </div>
-                    <button type="submit" disabled={isLoading} className="w-full sm:w-auto bg-gray-900 text-white font-bold px-8 py-3.5 rounded-xl hover:bg-black transition-all shadow-lg flex items-center justify-center disabled:opacity-50">
+                    <button type="submit" className="w-full sm:w-auto bg-gray-900 text-white font-bold px-8 py-3.5 rounded-xl hover:bg-black transition-all shadow-lg flex items-center justify-center">
                       <Save className="w-5 h-5 mr-2 text-gray-300" /> Simpan Konfigurasi
                     </button>
                   </div>
