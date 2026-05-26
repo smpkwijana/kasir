@@ -48,19 +48,12 @@
           LayoutDashboard, Receipt, Settings, Users, CreditCard, History, AlertCircle, MessageCircle, LogOut, Menu, X, Plus, Save, CheckCircle2, Printer, Search, Bell, Trash2, FileText, ShoppingCart, Download, Upload, Edit, CheckSquare, DollarSign, Globe, Cloud, Loader2
         } from 'lucide-react';
 
-        // =====================================================================
-        // 🔴 KONFIGURASI DATABASE: TARUH URL GOOGLE APPS SCRIPT ANDA DI SINI
-        // =====================================================================
-        const GAS_URL = "TARUH_URL_APPS_SCRIPT_ANDA_DISINI";
-        // =====================================================================
-
         // --- HELPER FUNCTIONS ---
-        // MEMPERBAIKI BUG: Konversi parameter ke String agar terhindar dari TypeError .replace
         const formatPhone = (phone) => {
           if (!phone) return '';
-          let cleanPhone = String(phone).replace(/\D/g, '');
-          if (cleanPhone.startsWith('0')) cleanPhone = '62' + cleanPhone.substring(1);
-          return cleanPhone;
+          let formatted = phone.replace(/\D/g, '');
+          if (formatted.startsWith('0')) formatted = '62' + formatted.substring(1);
+          return formatted;
         };
 
         const formatRp = (angka) => {
@@ -123,40 +116,12 @@
           // Global UI States
           const [toast, setToast] = useState(null);
           const [printData, setPrintData] = useState(null);
-          const [isSyncing, setIsSyncing] = useState(false);
 
           // Sync to LocalStorage on change
           useEffect(() => { saveData('siBayar_students', students); }, [students]);
           useEffect(() => { saveData('siBayar_payments', paymentTypes); }, [paymentTypes]);
           useEffect(() => { saveData('siBayar_transactions', transactions); }, [transactions]);
           useEffect(() => { saveData('siBayar_settings', settings); }, [settings]);
-
-          // --- AUTO SYNC UP (BACKGROUND) ---
-          useEffect(() => {
-            if (!isLoggedIn || GAS_URL.includes("TARUH_URL")) return;
-
-            const timer = setTimeout(async () => {
-              setIsSyncing(true);
-              try {
-                const payload = {
-                  action: 'syncUp',
-                  data: {
-                    students,
-                    payments: paymentTypes,
-                    transactions: transactions.map(t => ({ ...t, items: JSON.stringify(t.items) })),
-                    settings
-                  }
-                };
-                await fetch(GAS_URL, { method: 'POST', body: JSON.stringify(payload) });
-              } catch (error) {
-                console.error("Auto-sync failed", error);
-              } finally {
-                setIsSyncing(false);
-              }
-            }, 3000); // Sinkronisasi otomatis 3 detik setelah tidak ada perubahan (Debounce)
-
-            return () => clearTimeout(timer);
-          }, [students, paymentTypes, transactions, settings, isLoggedIn]);
 
           // --- ACTIONS ---
           const showToast = (message, type = 'success') => {
@@ -169,38 +134,13 @@
             setTimeout(() => { window.print(); }, 200);
           };
 
-          const handleLogin = async (e) => {
+          const handleLogin = (e) => {
             e.preventDefault();
             const userIn = e.target.username.value;
             const pass = e.target.password.value;
             if (userIn === 'admin' && pass === 'admin123') {
               setIsLoggedIn(true);
-
-              // AUTO FETCH (DOWNLOAD) KETIKA LOGIN
-              if (GAS_URL && !GAS_URL.includes("TARUH_URL")) {
-                showToast('Login berhasil! Mengambil data terbaru dari Cloud...', 'success');
-                setIsSyncing(true);
-                try {
-                  const res = await fetch(GAS_URL);
-                  const data = await res.json();
-                  
-                  if (data.students && data.students.length > 0) setStudents(data.students);
-                  if (data.payments && data.payments.length > 0) setPaymentTypes(data.payments);
-                  if (data.settings && data.settings.schoolName) setSettings(data.settings);
-                  if (data.transactions && data.transactions.length > 0) {
-                    setTransactions(data.transactions.map(t => ({
-                      ...t,
-                      items: typeof t.items === 'string' ? JSON.parse(t.items) : t.items
-                    })));
-                  }
-                  showToast('Data berhasil diperbarui dari Cloud!', 'success');
-                } catch (error) {
-                  showToast('Gagal terhubung ke Cloud. Menggunakan data lokal.', 'error');
-                }
-                setIsSyncing(false);
-              } else {
-                showToast('Login berhasil! Mode Local-First Aktif.', 'success');
-              }
+              showToast('Login berhasil! Mode Local-First Aktif.', 'success');
             } else {
               showToast('Username atau Password salah!', 'error');
             }
@@ -228,13 +168,13 @@
             { id: 'students', label: 'Data Siswa', icon: Users },
             { id: 'arrears', label: 'Data Tunggakan', icon: AlertCircle },
             { id: 'broadcast', label: 'Blast WA Ortu', icon: MessageCircle },
-            { id: 'settings', label: 'Pengaturan', icon: Settings },
+            { id: 'settings', label: 'Pengaturan & Cloud', icon: Settings },
           ];
 
           if (!isLoggedIn) {
             return (
               <>
-                <LoginScreen onLogin={handleLogin} isSyncing={isSyncing} />
+                <LoginScreen onLogin={handleLogin} />
                 {toast && <ToastNotification toast={toast} onClose={() => setToast(null)} />}
               </>
             );
@@ -286,8 +226,7 @@
               case 'settings':
                 return (
                   <SettingsPanel 
-                    settings={settings} setSettings={setSettings} showToast={showToast}
-                    isSyncing={isSyncing} setIsSyncing={setIsSyncing}
+                    settings={settings} setSettings={setSettings} showToast={showToast} 
                     students={students} setStudents={setStudents}
                     payments={paymentTypes} setPayments={setPaymentTypes}
                     transactions={transactions} setTransactions={setTransactions}
@@ -366,7 +305,7 @@
                                 <tr className="border-b border-gray-300">
                                   <td className="py-2 px-4 text-right text-gray-600">Uang Kembalian</td>
                                   <td className="py-2 px-4 text-right text-gray-600">{(printData.data.changeDue || 0).toLocaleString('id-ID')}</td>
-                                warm-up                  </tr>
+                                </tr>
                               </>
                             )}
                             <tr className="border-b-2 border-black">
@@ -646,16 +585,9 @@
                       </h2>
                     </div>
                     <div className="flex items-center space-x-4">
-                      {isSyncing && (
-                        <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-xs font-bold flex items-center animate-pulse border border-blue-200">
-                          <Cloud className="w-3.5 h-3.5 mr-1.5" /> Menyinkronkan...
-                        </span>
-                      )}
-                      {!isSyncing && !GAS_URL.includes("TARUH_URL") && (
-                        <span className="bg-green-50 text-green-600 px-3 py-1 rounded-full text-xs font-bold border border-green-200 flex items-center">
-                          <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Tersinkron
-                        </span>
-                      )}
+                      <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-bold border border-blue-200 flex items-center">
+                        Mode Lokal
+                      </span>
                       <div className="h-8 w-px bg-gray-200"></div>
                       <div className="text-right hidden md:block">
                         <p className="text-sm font-bold text-gray-800">{settings.schoolName}</p>
@@ -707,7 +639,7 @@
                   <FileText className="w-10 h-10 text-white" />
                 </div>
                 <h1 className="text-3xl font-extrabold text-gray-900 tracking-tight">SI-BAYAR PRO</h1>
-                <p className="text-gray-500 mt-2 font-medium">Sistem Informasi Pembayaran Sekolah</p>
+                <p className="text-gray-500 mt-2 font-medium">Sistem Informasi Pembayaran Sekolah (Local-First)</p>
               </div>
               <div className="bg-white p-8 rounded-2xl shadow-xl shadow-gray-200/50 w-full max-w-md border border-gray-100 relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
@@ -799,13 +731,13 @@
                     <Bell className="w-5 h-5 mr-2" /> Informasi Sistem
                   </h3>
                   <p className="text-blue-100 text-sm leading-relaxed mb-6">
-                    Selamat datang di Dasbor SI-BAYAR PRO. Aplikasi Anda sekarang tertanam langsung di browser dengan metode penyimpanan cepat (Local-First). Data akan otomatis disinkronkan ke Cloud.
+                    Selamat datang di Dasbor SI-BAYAR PRO. Aplikasi Anda sekarang tertanam langsung di browser dengan metode penyimpanan cepat (Local-First). Gunakan menu Pengaturan untuk mem-backup data ke Spreadsheet.
                   </p>
                   <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm border border-white/20">
                     <p className="text-xs text-blue-200 uppercase font-bold tracking-wider mb-1">Status Storage</p>
                     <div className="flex items-center">
                       <span className="w-2.5 h-2.5 bg-green-400 rounded-full mr-2 animate-pulse"></span>
-                      <span className="font-medium text-sm">Penyimpanan Lokal & Cloud Aktif</span>
+                      <span className="font-medium text-sm">Penyimpanan Lokal Aktif & Aman</span>
                     </div>
                   </div>
                 </div>
